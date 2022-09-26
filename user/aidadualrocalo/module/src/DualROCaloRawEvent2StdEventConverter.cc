@@ -1,3 +1,6 @@
+#include <queue>
+#include <cmath>
+
 #include "eudaq/StdEventConverter.hh"
 #include "eudaq/RawEvent.hh"
 #include "eudaq/Utils.hh"
@@ -127,6 +130,16 @@ bool DualROCaloRawEvent2StdEventConverter::Converting(eudaq::EventSPC d1, eudaq:
 }
 */
 
+struct drpixel{
+  uint8_t channel_id;
+  uint16_t lg_adc_value;
+  int16_t hg_adc_value;
+
+  bool operator<(const drpixel &o) const{
+    return hg_adc_value < o.hg_adc_value; 
+  }
+};
+
 class DualROCaloRawEvent2StdEventConverter: public eudaq::StdEventConverter{
   typedef std::vector<uint8_t>::const_iterator datait;
 public:
@@ -154,6 +167,31 @@ bool DualROCaloRawEvent2StdEventConverter::Converting(eudaq::EventSPC d1, eudaq:
     channel_map.push_back(i);    
     if (ss.peek() == ',') ss.ignore();
   }
+
+  
+  content = eudaq::ReadLineFromFile(hg_pedestal_file);
+  std::vector<int> hg_pedestals;
+  std::stringstream ss2(content);
+
+  float j;
+
+  while (ss2 >> j)
+    {
+        hg_pedestals.push_back(std::round(j));
+
+        if (ss2.peek() == ',')
+        ss2.ignore();
+    }
+/*
+    for (int k=0; k< hg_pedestals.size(); k++)
+    std::cout << hg_pedestals.at(k)<<std::endl;
+    /*
+  for (float i; ss >> i;) {
+    channel_map.push_back(i);
+    std::cout<<"!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! " << std::to_string(i) << std::endl;    
+    if (ss.peek() == ',') ss.ignore();
+  }*/
+
 
 /*
   std::vector<float> hg_pedestals;
@@ -212,6 +250,8 @@ bool DualROCaloRawEvent2StdEventConverter::Converting(eudaq::EventSPC d1, eudaq:
   plane_lg.SetSizeZS(16, 20, 0);
   uint8_t board_id = data0[0];
 
+  std::priority_queue<drpixel> pq;
+
   while (it0 < data0.end()) {
     
     uint8_t channel_id = eudaq::getlittleendian<uint8_t>(&(*(it0)));
@@ -219,13 +259,26 @@ bool DualROCaloRawEvent2StdEventConverter::Converting(eudaq::EventSPC d1, eudaq:
     uint16_t hg_adc_value = eudaq::getlittleendian<uint16_t>(&(*(it0+4)));
 
     uint8_t n = channel_map[channel_id];
+    int16_t ped_subtracted_hg = hg_adc_value - hg_pedestals[n+64*board_id];
+    //std::cout << "PEDESTAL is = " << std::to_string(hg_pedestals[n+64*board_id]) << std::endl;
+
+    //uint16_t my_a = 10;
+    //uint16_t my_b = 5;
+    
+    //std::cout << "PEDESTAL is = " << std::to_string((int)((int)my_a-(int)my_b)) << std::endl;
+
+    drpixel thispixel = {channel_id, lg_adc_value, ped_subtracted_hg};
+    pq.push(thispixel);
+
+    /*
+    uint8_t n = channel_map[channel_id];
     uint16_t x = n % 16;
     uint16_t y = 19 - ((uint16_t) n/16 + 4*board_id); //channel numbering starts from the top (19 because we start from 0)
 
     //std::cout << "Converting:: lg value = " << std::to_string(lg_adc_value) << std::endl;
     //std::cout<<"Converting:: n = " << std::to_string(n)<<" x = " << std::to_string(x)<<" y = " << std::to_string(y) << " adc = " << std::to_string(lg_adc_value) <<  std::endl;
 
-
+  
     if (hg_adc_value>70) 
       plane.PushPixel(x, y, hg_adc_value);
 
@@ -233,14 +286,23 @@ bool DualROCaloRawEvent2StdEventConverter::Converting(eudaq::EventSPC d1, eudaq:
       plane_lg.PushPixel(x, y, lg_adc_value);
 
 
-    it0 += 6;
     
     //plane.SetPivotPixel((9216 + pivot + PIVOTPIXELOFFSET) % 9216);
     //DecodeFrame(plane, 0, &it0[8], len0, use_all_hits);
     //DecodeFrame(plane, 1, &it1[8], len1, use_all_hits);
+    */
+
+    it0 += 6;
     
+  }
 
-
+  for (int p=0; p<2; p++){
+    uint8_t n = channel_map[pq.top().channel_id];
+    uint16_t x = n % 16;
+    uint16_t y = 19 - ((uint16_t) n/16 + 4*board_id); //channel numbering starts from the top (19 because we start from 0)
+    plane.PushPixel(x, y, pq.top().hg_adc_value);
+    std::cout<<"DualROCaloRAWEventConverter:: Pushing Pixel with hg_adc_value = " << std::to_string(pq.top().hg_adc_value) << "and pedestal = << " << std::to_string(hg_pedestals[n+64*board_id]) << std::endl;
+    pq.pop();
   }
 
   d2->AddPlane(plane);
