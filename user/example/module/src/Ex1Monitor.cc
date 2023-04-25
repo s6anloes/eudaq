@@ -8,9 +8,10 @@
 #include <thread>
 #include <random>
 
-class MuPix8Monitor : public eudaq::Monitor {
+//----------DOC-MARK-----BEG*DEC-----DOC-MARK----------
+class Ex1Monitor : public eudaq::Monitor {
 public:
-  MuPix8Monitor(const std::string & name, const std::string & runcontrol);
+  Ex1Monitor(const std::string & name, const std::string & runcontrol);
   void DoInitialise() override;
   void DoConfigure() override;
   void DoStartRun() override;
@@ -19,7 +20,7 @@ public:
   void DoReset() override;
   void DoReceive(eudaq::EventSP ev) override;
   
-  static const uint32_t m_id_factory = eudaq::cstr2hash("MuPix8Monitor");
+  static const uint32_t m_id_factory = eudaq::cstr2hash("Ex1Monitor");
   
 private:
   bool m_en_print;
@@ -29,39 +30,39 @@ private:
 
 namespace{
   auto dummy0 = eudaq::Factory<eudaq::Monitor>::
-    Register<MuPix8Monitor, const std::string&, const std::string&>(MuPix8Monitor::m_id_factory);
+    Register<Ex1Monitor, const std::string&, const std::string&>(Ex1Monitor::m_id_factory);
 }
 
-MuPix8Monitor::MuPix8Monitor(const std::string & name, const std::string & runcontrol)
+Ex1Monitor::Ex1Monitor(const std::string & name, const std::string & runcontrol)
   :eudaq::Monitor(name, runcontrol){  
 }
 
-void MuPix8Monitor::DoInitialise(){
+void Ex1Monitor::DoInitialise(){
   auto ini = GetInitConfiguration();
   ini->Print(std::cout);
 }
 
-void MuPix8Monitor::DoConfigure(){
+void Ex1Monitor::DoConfigure(){
   auto conf = GetConfiguration();
   conf->Print(std::cout);
-  m_en_print = conf->Get("MuPix8_ENABLE_PRINT", 1);
-  m_en_std_converter = conf->Get("MuPix8_ENABLE_STD_CONVERTER", 0);
-  m_en_std_print = conf->Get("MuPix8_ENABLE_STD_PRINT", 0);
+  m_en_print = conf->Get("EX1_ENABLE_PRINT", 1);
+  m_en_std_converter = conf->Get("EX1_ENABLE_STD_CONVERTER", 0);
+  m_en_std_print = conf->Get("EX1_ENABLE_STD_PRINT", 0);
 }
 
-void MuPix8Monitor::DoStartRun(){
+void Ex1Monitor::DoStartRun(){
 }
 
-void MuPix8Monitor::DoStopRun(){
+void Ex1Monitor::DoStopRun(){
 }
 
-void MuPix8Monitor::DoReset(){
+void Ex1Monitor::DoReset(){
 }
 
-void MuPix8Monitor::DoTerminate(){
+void Ex1Monitor::DoTerminate(){
 }
 
-void MuPix8Monitor::DoReceive(eudaq::EventSP ev){
+void Ex1Monitor::DoReceive(eudaq::EventSP ev){
   if(m_en_print)
     ev->Print(std::cout);
   if(m_en_std_converter){

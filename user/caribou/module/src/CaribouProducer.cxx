@@ -27,7 +27,8 @@ private:
   unsigned m_ev;
 
   DeviceManager* manager_;
-  Device* device_;
+  Device* device_{nullptr};
+  Device* secondary_device_{nullptr};
   std::string name_;
 
   std::mutex device_mutex_;
@@ -37,6 +38,7 @@ private:
   size_t number_of_subevents_{0};
 
   std::string adc_signal_;
+  uint64_t adc_freq_;
 };
 
 namespace{
@@ -45,11 +47,20 @@ namespace{
 }
 
 CaribouProducer::CaribouProducer(const std::string name, const std::string &runcontrol)
-: eudaq::Producer(name, runcontrol), m_ev(0), m_exit_of_run(false), name_(name) {
+: eudaq::Producer(name, runcontrol), m_ev(0), m_exit_of_run(false) {
   // Add cout as the default logging stream
   Log::addStream(std::cout);
 
-  LOG(INFO) << "Instantiated CaribouProducer for device \"" << name << "\"";
+  // Separate the device name from the device identifier, the latter is only relevant for EUDAQ:
+  auto const pos = name.find_last_of('_');
+  if(pos == std::string::npos) {
+    name_ = name;
+    LOG(INFO) << "Instantiated CaribouProducer for device \"" << name << "\"";
+  } else {
+    name_ = name.substr(0, pos);
+    const auto identifier = name.substr(pos + 1);
+    LOG(INFO) << "Instantiated CaribouProducer for device \"" << name << "\" with identifier \"" << identifier << "\"";
+  }
 
   // Create new Peary device manager
   manager_ = new DeviceManager();
@@ -66,6 +77,8 @@ void CaribouProducer::DoReset() {
   // Delete all devices:
   std::lock_guard<std::mutex> lock{device_mutex_};
   manager_->clearDevices();
+  device_ = nullptr;
+  secondary_device_ = nullptr;
 }
 
 void CaribouProducer::DoInitialise() {
@@ -105,6 +118,17 @@ void CaribouProducer::DoInitialise() {
   size_t device_id = manager_->addDevice(name_, config);
   EUDAQ_INFO("Manager returned device ID " + std::to_string(device_id) + ", fetching device...");
   device_ = manager_->getDevice(device_id);
+
+  // Add secondary device if it is configured:
+  if(ini->Has("secondary_device")) {
+    std::string secondary = ini->Get("secondary_device", std::string());
+    if(std::find(sections.begin(), sections.end(), secondary) != sections.end()) {
+      config.SetSection(secondary);
+    }
+    size_t device_id2 = manager_->addDevice(secondary, config);
+    EUDAQ_INFO("Manager returned device ID " + std::to_string(device_id2) + ", fetching secondary device...");
+    secondary_device_ = manager_->getDevice(device_id2);
+  }
 }
 
 // This gets called whenever the DAQ is configured
@@ -118,13 +142,21 @@ void CaribouProducer::DoConfigure() {
   // Switch on the device power:
   device_->powerOn();
 
+  if(secondary_device_ != nullptr) {
+    secondary_device_->powerOn();
+  }
+
   // Wait for power to stabilize and for the TLU clock to be present
   eudaq::mSleep(1000);
 
   // Configure the device
   device_->configure();
 
+  if(secondary_device_ != nullptr) {
+    secondary_device_->configure();
+  }
   // Set additional registers from the configuration:
+
   if(config->Has("register_key") || config->Has("register_value")) {
     auto key = config->Get("register_key", "");
     auto value = config->Get("register_value", 0);
@@ -134,9 +166,12 @@ void CaribouProducer::DoConfigure() {
 
   // Select which ADC signal to regularly fetch:
   adc_signal_ = config->Get("adc_signal", "");
+  adc_freq_ = config->Get("adc_frequency", 1000);
+
   if(!adc_signal_.empty()) {
     // Try it out directly to catch misconfiugration
     auto adc_value = device_->getADC(adc_signal_);
+    EUDAQ_USER("Will probe ADC signal \"" + adc_signal_ + "\" every " + std::to_string(adc_freq_) + " events");
   }
 
   // Allow to stack multiple sub-events
@@ -179,6 +214,8 @@ void CaribouProducer::DoStartRun() {
 
 void CaribouProducer::DoStopRun() {
 
+  LOG(INFO) << "Draining buffers...";
+  eudaq::mSleep(500);
   LOG(INFO) << "Stopping run...";
 
   // Set a flag to signal to the polling loop that the run is over
@@ -212,10 +249,11 @@ void CaribouProducer::RunLoop() {
         event->AddBlock(0, data);
 
         // Query ADC if wanted:
-        if(m_ev%1000 == 0) {
+        if(m_ev%adc_freq_ == 0) {
           if(!adc_signal_.empty()) {
             auto adc_value = device_->getADC(adc_signal_);
             LOG(DEBUG) << "Reading ADC: " << adc_value << "V";
+            EUDAQ_USER("ADC reading: " + adc_signal_ + " =  " + std::to_string(adc_value));
             event->SetTag(adc_signal_, adc_value);
           }
         }

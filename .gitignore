@@ -15,9 +15,15 @@ test.ini
 *.dat
 *.txt
 *.sh
+*.conf
+*.ini
+*.geo
+user/example/misc/*conf
+user/example/misc/*ini
 
 *txt
 *sh
+
 
 *.zip
 !main/lib/python/extern/pybind11*zip
