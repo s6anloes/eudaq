@@ -8,6 +8,19 @@
 #include <regex>
 #include <filesystem>
 
+#include <cstdio>
+#include <iostream>
+#include <memory>
+#include <stdexcept>
+#include <string>
+#include <array>
+
+#include <unistd.h>
+#include <sys/types.h>
+#include <sys/mman.h>
+#include <fcntl.h>
+#include <cstring>
+
 struct CorryArgumentList {
   char **argv;
   size_t sz, used;
@@ -62,6 +75,11 @@ private:
   std::string m_corry_options;
 
   CorryArgumentList m_args;
+  // Variable in which the full command with which corry is called is put together and stored
+  std::string m_building_corry_call;
+  int m_shm_id;
+  // Shared memory where the fulll corry command will be stored (assembled in child process of fork)
+  char* m_full_corry_call;
 
   std::vector<DataCollectorAttributes> m_datacollector_vector;
 
@@ -74,6 +92,27 @@ namespace{
 
 CorryMonitor::CorryMonitor(const std::string & name, const std::string & runcontrol)
   :eudaq::Monitor(name, runcontrol){  
+
+  // Initialization of shared memory
+  size_t size = 4096; // Initial size of shared memory
+
+  m_shm_id = shm_open("/corry_call", O_CREAT | O_RDWR, 0666);
+  if (m_shm_id == -1) {
+      std::cerr << "shm_open failed." << std::endl;
+      return;
+  }
+
+  if (ftruncate(m_shm_id, size) == -1) {
+      std::cerr << "ftruncate failed." << std::endl;
+      return;
+  }
+
+  m_full_corry_call = static_cast<char*>(mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_SHARED, m_shm_id, 0));
+  if (m_full_corry_call == MAP_FAILED) {
+      std::cerr << "mmap failed." << std::endl;
+      return;
+  } 
+
 }
 
 void CorryMonitor::DoInitialise(){
@@ -191,6 +230,21 @@ std::pair<std::string, std::string> CorryMonitor::getFileString(std::string patt
 }
 
 
+// get cout output from command (taken from https://stackoverflow.com/questions/478898/how-do-i-execute-a-command-and-get-the-output-of-the-command-within-c-using-po) 
+std::string get_output_from_exec(const char* cmd) {
+    std::array<char, 2048> buffer;
+    std::string result;
+    std::unique_ptr<FILE, decltype(&pclose)> pipe(popen(cmd, "r"), pclose);
+    if (!pipe) {
+        throw std::runtime_error("popen() failed!");
+    }
+    while (fgets(buffer.data(), buffer.size(), pipe.get()) != nullptr) {
+        result += buffer.data();
+    }
+    return result;
+}
+
+
 void CorryMonitor::DoConfigure(){
   auto conf = GetConfiguration();
   //conf->Print(std::cout);
@@ -205,8 +259,9 @@ void CorryMonitor::DoConfigure(){
     EUDAQ_ERROR("Config for corry cannot be found under "+m_corry_config+" ! Please check your /path/to/config.conf (Avoid using ~)");
 
 
+  m_building_corry_call = m_corry_path + " -c " + m_corry_config + " " + m_corry_options;
   // command to be exectued in DoStartRun(), stored tokenized in m_args.argv
-  std::string my_command = "xterm -e " + m_corry_path + " -c " + m_corry_config + " " + m_corry_options;
+  std::string my_command = "xterm -e " + m_building_corry_call;
 
   // Clear vector with datacollectors
   m_datacollector_vector.clear();
@@ -327,7 +382,7 @@ void CorryMonitor::DoStartRun(){
     exit(1);
 
   case 0: // child: start corryvreckan
-    
+
     // Setting up inotify
     fd = inotify_init();
     if ( fd < 0 ) {
@@ -394,10 +449,11 @@ void CorryMonitor::DoStartRun(){
 
 
     for (auto & it : m_datacollector_vector){
-      EUDAQ_INFO("Found file "+it.monitor_file_path+it.event_name+" for monitorung");
+      EUDAQ_INFO("Found file "+it.monitor_file_path+it.event_name+" for monitoring");
       // add passing the file name to corry to the command
       for (auto m: it.detector_planes){
-        std::string my_command = "-o EventLoaderEUDAQ2:"+m+".file_name="+it.monitor_file_path+it.event_name;
+        std::string my_command = " -o EventLoaderEUDAQ2:"+m+".file_name="+it.monitor_file_path+it.event_name;
+        /* 
         char * cstr = new char[my_command.length()+1];
         std::strcpy(cstr, my_command.c_str());
 
@@ -408,8 +464,47 @@ void CorryMonitor::DoStartRun(){
         while ((cstr = strtok (0, TOKEN)) != 0){
           m_args.argv = addArg (m_args.argv, &m_args.sz, &m_args.used, cstr);
         }
+        */
+        // Add the command to the string assembling the full corryvreckan command
+        m_building_corry_call += my_command;
       }
     }
+
+    { 
+      // Full command to call corry built. Time to store it in shared memory. Curly brackets to limit scope because of fork()
+      size_t message_size = m_building_corry_call.size() + 1; // Include null-terminator
+
+      if (ftruncate(m_shm_id, message_size) == -1) { // Resize shared memory to fit the message
+          std::cerr << "ftruncate failed." << std::endl;
+          return;
+      }
+
+      m_full_corry_call = static_cast<char*>(mmap(nullptr, message_size, PROT_READ | PROT_WRITE, MAP_SHARED, m_shm_id, 0));
+      if (m_full_corry_call == MAP_FAILED) {
+          std::cerr << "mmap failed." << std::endl;
+          return;
+      }
+
+      std::strcpy(m_full_corry_call, m_building_corry_call.c_str());
+    }
+
+    /*
+    {
+      // Add command to xterm call to stop the window from closing when corry is closed
+      std::string my_command = "; read -p \'Press enter to close window\'";
+      char * cstr = new char[my_command.length()+1];
+      std::strcpy(cstr, my_command.c_str());
+
+      // Add the command itself.
+      m_args.argv = addArg (m_args.argv, &m_args.sz, &m_args.used, strtok (cstr, TOKEN));
+
+      // Add each argument in turn, then the terminator.
+      while ((cstr = strtok (0, TOKEN)) != 0){
+        m_args.argv = addArg (m_args.argv, &m_args.sz, &m_args.used, cstr);
+      }
+      
+    }
+    */
 
     m_args.argv = addArg (m_args.argv, &m_args.sz, &m_args.used, 0);
 
@@ -420,14 +515,22 @@ void CorryMonitor::DoStartRun(){
     }
     */
 
-    // save the full command with which corry is called for debugging purposes
+    /* // save the full command passed to execvp for debugging purposes
     command_ptr = m_args.argv;
     for (char* c=*command_ptr; c; c=*++command_ptr) {
       full_command += std::string(c) + " ";
+    } */
+    
+    
+    {
+      std::string xterm = "xterm";
+      std::string xterm_flag = "-e";
+      std::string xterm_argument = m_building_corry_call + "; bash";
+      EUDAQ_DEBUG("Full command passed to execvp calling corryvreckan : "+xterm+" "+xterm_flag+" "+xterm_argument);
+      char* execvp_command[] = {const_cast<char*>(xterm.c_str()), const_cast<char*>(xterm_flag.c_str()), const_cast<char*>(xterm_argument.c_str()), NULL};
+      execvp(execvp_command[0], execvp_command);
     }
-    EUDAQ_DEBUG("Full command passed to execvp calling corryvreckan : "+full_command);
 
-    execvp(m_args.argv[0], m_args.argv);
     perror("execv"); // execv doesn't return unless there is a problem
     exit(1);
   
@@ -437,25 +540,72 @@ void CorryMonitor::DoStartRun(){
   
 }
 
-// Killing child process (corry) (adapted from https://stackoverflow.com/questions/13273836/how-to-kill-child-of-fork)
+
 void CorryMonitor::DoStopRun(){
-  kill(m_corry_pid, SIGINT);
+
+  // Store full corry command in string for easier handling
+  std::string corry_call_command(m_full_corry_call);
+  EUDAQ_DEBUG("Corryvreckan full call command: "+corry_call_command);
+
+  // Unmap and close shared memory
+  munmap(m_full_corry_call, corry_call_command.size()+1);
+  close(m_shm_id);
+  // Remove shared memory
+  shm_unlink("/corry_call");
+
+  // Command to get corry pid using matching with the full call command
+  std::string cmd_pipe_string = "ps -aux | grep -v \"xterm\" | grep -v \"bash\" | grep -v \"grep\" | grep \""+corry_call_command+"\"";
+  std::cout<< "CMD_PIPE_STRING is " << std::endl;
+  std::cout<< cmd_pipe_string << std::endl;
+  // std::string cmd_pipe_string = "ps -aux | grep -v \"grep\" | grep \'/usr/lib/cups/notifier/dbus dbus://\'";
+
+  // Output of ps -aux which *should* only be the line containing the corry call
+  std::string ps_output = get_output_from_exec(cmd_pipe_string.c_str());
+
+  // Split the string to get PID by looping over it (later)
+  std::vector<std::string> ps_output_split = eudaq::splitString(ps_output, ' ');
+
+  // Regex for positive number only
+  std::regex reg("^[0-9]+$");
+  std::smatch m;
+  int corry_pid = -1;
+
+  // Looping over vector to get corry PID to close corry without closing the xterm window
+  // Note: Depending on length of username, there is an unknown number of whitespaces between user and PID, hence looping is required
+  // Note: Skipping first entry in vector because this will always be username
+  for (auto it = std::next(ps_output_split.begin()); it != ps_output_split.end(); ++it) {
+    const std::string& s = *it;
+    std::cout << "s= " << s << std::endl;
+    if(std::regex_search(s, m, reg))
+    {
+        corry_pid = std::stoi(m.str());
+        break;
+    }
+  }
+
+  // Killing process (corry) (adapted from https://stackoverflow.com/questions/13273836/how-to-kill-child-of-fork)
+  kill(corry_pid, SIGINT);
 
   bool died = false;
   for (int loop=0; !died && loop < 5; ++loop)
   {
     int status;
     eudaq::mSleep(1000);
-    if (waitpid(m_corry_pid, &status, WNOHANG) == m_corry_pid) died = true;
+    if (waitpid(corry_pid, &status, WNOHANG) == corry_pid) died = true;
   }
 
-  if (!died) kill(m_corry_pid, SIGQUIT);
+  if (!died) kill(corry_pid, SIGQUIT);
+
 }
 
 void CorryMonitor::DoReset(){
+  if (m_corry_pid !=0)
+    kill(m_corry_pid, SIGINT);
 }
 
 void CorryMonitor::DoTerminate(){
+  if (m_corry_pid !=0)
+    kill(m_corry_pid, SIGINT);
 }
 
 void CorryMonitor::DoReceive(eudaq::EventSP ev){
