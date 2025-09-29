@@ -1,5 +1,5 @@
 [DualROCalo_0]
-number_of_pixels = 8, 32
+number_of_pixels = 8, 128
 orientation = 0deg,0deg,0deg
 orientation_mode = "xyz"
 pixel_pitch = 55um,55um
@@ -9,7 +9,7 @@ time_resolution = -1ns
 type = "DualROCalo"
 
 [DualROCalo_1]
-number_of_pixels = 8, 32
+number_of_pixels = 8, 128
 orientation = 0deg,0deg,0deg
 orientation_mode = "xyz"
 pixel_pitch = 55um,55um

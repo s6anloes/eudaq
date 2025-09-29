@@ -29,10 +29,11 @@ public:
 private:
   std::ifstream m_ifile;
   uint64_t m_ifile_size;
-  std::string m_dummy_data_path;
   std::string m_data_in_path;
   std::thread m_thd_run;
   mutable bool m_exit_of_run;
+
+
 };
 
 
@@ -48,18 +49,7 @@ DualROCaloProducer::DualROCaloProducer(const std::string & name, const std::stri
 
 void DualROCaloProducer::DoInitialise(){
   auto ini = GetInitConfiguration();
-  std::ofstream ofile;
-  std::string dummy_string;
-  dummy_string = ini->Get("DUMMY_STRING", dummy_string);
-  m_dummy_data_path = ini->Get("DUMMY_FILE_PATH", "ex0dummy.txt");
   m_data_in_path = ini->Get("DATA_IN_PATH", "infile.txt");
-  ofile.open(m_dummy_data_path);
-  if(!ofile.is_open()){
-    EUDAQ_THROW("dummy data file (" + m_dummy_data_path +") can not open for writing");
-  }
-  ofile << dummy_string;
-  ofile.close();
-
   ReadFileSize();
 }
 
@@ -170,8 +160,8 @@ void DualROCaloProducer::Mainloop(){
 			loop_count++;
 
 			if(event_size != block.size()){
-				EUDAQ_DEBUG("loop_count = " + std::to_string(loop_count));
-				EUDAQ_DEBUG("eventsize = " + std::to_string(event_size) + " with block.size() = " + std::to_string(block.size()));
+				// EUDAQ_DEBUG("loop_count = " + std::to_string(loop_count));
+				// EUDAQ_DEBUG("eventsize = " + std::to_string(event_size) + " with block.size() = " + std::to_string(block.size()));
 				//eudaq::mSleep(2000);
 				int offset = event_size-block.size();
 				m_ifile.seekg(offset, std::ios_base::cur);

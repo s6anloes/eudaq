@@ -5,7 +5,7 @@
 #include "eudaq/RawEvent.hh"
 #include "eudaq/Utils.hh"
 
-#define MAX_BOARDS_NUM   4
+#define MAX_SIPM_MODULE_NUM   8
 
 struct drpixel{
   uint8_t board_id;
@@ -22,7 +22,7 @@ class DualROCaloRawEvent2StdEventConverter: public eudaq::StdEventConverter{
   typedef std::vector<uint8_t>::const_iterator datait;
 public:
   bool Converting(eudaq::EventSPC d1, eudaq::StandardEventSP d2, eudaq::ConfigurationSPC conf) const override;
-  std::vector<int> Filling_Channel_Map(eudaq::ConfigurationSPC conf) const;
+//  std::vector<int> Filling_Channel_Map(eudaq::ConfigurationSPC conf) const;
   std::vector<int> Filling_Pedestals(std::string pedestal_file_name) const;
 
   static const uint32_t m_id_factory = eudaq::cstr2hash("DualROCaloEvent");
@@ -32,7 +32,7 @@ namespace{
   auto dummy0 = eudaq::Factory<eudaq::StdEventConverter>::
     Register<DualROCaloRawEvent2StdEventConverter>(DualROCaloRawEvent2StdEventConverter::m_id_factory);
 }
-
+/*
 std::vector<int> DualROCaloRawEvent2StdEventConverter::Filling_Channel_Map(eudaq::ConfigurationSPC conf) const{
 
   auto map_file = conf->Get("map_file", "");
@@ -49,12 +49,12 @@ std::vector<int> DualROCaloRawEvent2StdEventConverter::Filling_Channel_Map(eudaq
   return channel_map;
 
 }
-
+*/
 
 std::vector<int> DualROCaloRawEvent2StdEventConverter::Filling_Pedestals(std::string pedestal_file_name) const{
   
   if (pedestal_file_name == ""){
-    std::vector<int> empty_pedestals(MAX_BOARDS_NUM*64, 0);
+    std::vector<int> empty_pedestals(MAX_SIPM_MODULE_NUM*2*64, 0);
     return empty_pedestals;
   }
 
@@ -87,11 +87,16 @@ bool DualROCaloRawEvent2StdEventConverter::Converting(eudaq::EventSPC d1, eudaq:
   if(!ev)
     return false;
 
-  int channel_map[64];
-  for (int i=0; i<16; i++) {		// rows, bottom to top
-	for (int j=0; j<4; j++) {	// columns, left to right
-		channel_map[i/2 + (i%2)*8 + j*16] = i*4+j;	//channel_map[channel_no] = idx(x=j,y=j)
-	}
+  int channel_map[64];		// one FERS board
+  for (int i=1; i<16; i+=2) {		// odd rows, bottom to top
+    for (int j=0; j<4; j++) {	// columns, left to right
+      channel_map[(i-1)/2+8+j*16] = i*4+j;	//channel_map[channel_no] = position_idx(x=j,y=i)
+    }
+  }
+  for (int i=0; i<15; i+=2) {		// even rows, bottom to top
+    for (int j=0; j<4; j++) {	// columns, left to right
+      channel_map[8-(i+2)/2+j*16] = i*4+j;	//channel_map[channel_no] = position_idx(x=j,y=i)
+    }
   }
   //std::vector<int> channel_map = DualROCaloRawEvent2StdEventConverter::Filling_Channel_Map(conf);
   
@@ -152,10 +157,10 @@ bool DualROCaloRawEvent2StdEventConverter::Converting(eudaq::EventSPC d1, eudaq:
   d2->SetDetectorType("DualROCalo");
 
   eudaq::StandardPlane hg_plane(0, "DualROCalo", "DualROCalo");
-  hg_plane.SetSizeZS(8, MAX_BOARDS_NUM/2*16, 0);
+  hg_plane.SetSizeZS(8, MAX_SIPM_MODULE_NUM*16, 0);
 
   eudaq::StandardPlane lg_plane(1, "DualROCalo", "DualROCalo");
-  lg_plane.SetSizeZS(8, MAX_BOARDS_NUM/2*16, 0);
+  lg_plane.SetSizeZS(8, MAX_SIPM_MODULE_NUM*16, 0);
 
   auto hg_send_n_channels = conf->Get("hg_send_n_channels", 64);
   auto lg_send_n_channels = conf->Get("lg_send_n_channels", 64);
