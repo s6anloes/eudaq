@@ -7,6 +7,7 @@
 #include "mapping_sipm.hpp"
 
 #define MAX_SIPM_MODULE_NUM   8
+#define NUM_CHANNELS 1024
 
 struct drpixel{
   unsigned int index;
@@ -94,8 +95,10 @@ bool DualROCaloRawEvent2StdEventConverter::Converting(eudaq::EventSPC d1, eudaq:
   auto lg_pedestal_file = conf->Get("lg_pedestal_file", "");
   std::vector<int> lg_pedestals = DualROCaloRawEvent2StdEventConverter::Filling_Pedestals(lg_pedestal_file);
 
-  std::priority_queue<drpixel> hg_queue;
-  std::priority_queue<drpixel> lg_queue;
+  std::priority_queue<drpixel> s_hg_queue;
+  std::priority_queue<drpixel> s_lg_queue;
+  std::priority_queue<drpixel> c_hg_queue;
+  std::priority_queue<drpixel> c_lg_queue;
 
   auto &rawev = *ev;
 
@@ -124,11 +127,24 @@ bool DualROCaloRawEvent2StdEventConverter::Converting(eudaq::EventSPC d1, eudaq:
     int16_t ped_subtracted_hg = hg_adc_value - hg_pedestals[index];
     int16_t ped_subtracted_lg = lg_adc_value - lg_pedestals[index];
 
+    auto physinfo = SiPMCaloMapping::getPhysInfoFromIdx(index);
     drpixel hg_pixel = {index, ped_subtracted_hg, toa_value};
     drpixel lg_pixel = {index, ped_subtracted_lg, tot_value};
 
-    hg_queue.push(hg_pixel);
-    lg_queue.push(lg_pixel);
+    if (physinfo.type == 'S'){
+      s_hg_queue.push(hg_pixel);
+      s_lg_queue.push(lg_pixel);
+    }
+    else if (physinfo.type == 'C'){
+      c_hg_queue.push(hg_pixel);
+      c_lg_queue.push(lg_pixel);
+    }
+    else{
+      EUDAQ_THROW("DualROCaloRawEvent2StdEventConverter: Invalid SiPM type: " + std::string(1, physinfo.type));
+    }
+
+    // hg_queue.push(hg_pixel);
+    // lg_queue.push(lg_pixel);
     
     it0 += 12;
   }
@@ -151,39 +167,59 @@ bool DualROCaloRawEvent2StdEventConverter::Converting(eudaq::EventSPC d1, eudaq:
   // Identify the detetor type
   d2->SetDetectorType("DualROCalo");
 
-  eudaq::StandardPlane hg_plane(0, "DualROCalo", "DualROCalo");
-  hg_plane.SetSizeZS(8, MAX_SIPM_MODULE_NUM*16, 0);
+  eudaq::StandardPlane s_hg_plane(0, "DualROCalo", "DualROCalo");
+  s_hg_plane.SetSizeZS(8, MAX_SIPM_MODULE_NUM*16, 0);
 
-  eudaq::StandardPlane lg_plane(1, "DualROCalo", "DualROCalo");
-  lg_plane.SetSizeZS(8, MAX_SIPM_MODULE_NUM*16, 0);
+  eudaq::StandardPlane s_lg_plane(1, "DualROCalo", "DualROCalo");
+  s_lg_plane.SetSizeZS(8, MAX_SIPM_MODULE_NUM*16, 0);
 
-  auto hg_send_n_channels = conf->Get("hg_send_n_channels", 64);
-  auto lg_send_n_channels = conf->Get("lg_send_n_channels", 64);
+  eudaq::StandardPlane c_hg_plane(2, "DualROCalo", "DualROCalo");
+  c_hg_plane.SetSizeZS(8, MAX_SIPM_MODULE_NUM*16, 0);
 
-  for (int p=0; p<64; p++){
+  eudaq::StandardPlane c_lg_plane(3, "DualROCalo", "DualROCalo");
+  c_lg_plane.SetSizeZS(8, MAX_SIPM_MODULE_NUM*16, 0);
+
+  auto hg_send_n_channels = conf->Get("hg_send_n_channels", NUM_CHANNELS);
+  auto lg_send_n_channels = conf->Get("lg_send_n_channels", NUM_CHANNELS);
+
+  for (int p=0; p<NUM_CHANNELS; p++){
     if (p<hg_send_n_channels){
-      auto physinfo = SiPMCaloMapping::getPhysInfoFromIdx(hg_queue.top().index);
-      auto x = physinfo.column;
-      auto y = physinfo.row + (board_id/2)*16;
-      hg_plane.PushPixel(x, y, hg_queue.top().adc_value, hg_queue.top().time_value);	//time_value is ToA
+      auto s_physinfo = SiPMCaloMapping::getPhysInfoFromIdx(s_hg_queue.top().index);
+      auto s_x = s_physinfo.column;
+      auto s_y = s_physinfo.row + (board_id/2)*16;
+      s_hg_plane.PushPixel(s_x, s_y, s_hg_queue.top().adc_value, s_hg_queue.top().time_value);	//time_value is ToA
+
+      auto c_physinfo = SiPMCaloMapping::getPhysInfoFromIdx(c_hg_queue.top().index);
+      auto c_x = c_physinfo.column;
+      auto c_y = c_physinfo.row + (board_id/2)*16;
+      c_hg_plane.PushPixel(c_x, c_y, c_hg_queue.top().adc_value, c_hg_queue.top().time_value);	//time_value is ToA
     }
-    hg_queue.pop();
+    s_hg_queue.pop();
+    c_hg_queue.pop();
   }
 
-  for (int k=0; k<64; k++){
+  for (int k=0; k<NUM_CHANNELS; k++){
     if (k<lg_send_n_channels){
-      auto physinfo = SiPMCaloMapping::getPhysInfoFromIdx(lg_queue.top().index);
-      auto x = physinfo.column;
-      auto y = physinfo.row + (board_id/2)*16;
-      lg_plane.PushPixel(x, y, lg_queue.top().adc_value, lg_queue.top().time_value);	//time_value is ToT
+      auto s_physinfo = SiPMCaloMapping::getPhysInfoFromIdx(s_lg_queue.top().index);
+      auto s_x = s_physinfo.column;
+      auto s_y = s_physinfo.row + (board_id/2)*16;
+      s_lg_plane.PushPixel(s_x, s_y, s_lg_queue.top().adc_value, s_lg_queue.top().time_value);	//time_value is ToT
+
+      auto c_physinfo = SiPMCaloMapping::getPhysInfoFromIdx(c_lg_queue.top().index);
+      auto c_x = c_physinfo.column;
+      auto c_y = c_physinfo.row + (board_id/2)*16;
+      c_lg_plane.PushPixel(c_x, c_y, c_lg_queue.top().adc_value, c_lg_queue.top().time_value);	//time_value is ToT
     }
-    lg_queue.pop();
+    s_lg_queue.pop();
+    c_lg_queue.pop();
   }
 
-  
-  d2->AddPlane(hg_plane);
-  d2->AddPlane(lg_plane);
-  
+
+  d2->AddPlane(s_hg_plane);
+  d2->AddPlane(s_lg_plane);
+  d2->AddPlane(c_hg_plane);
+  d2->AddPlane(c_lg_plane);
+
   hg_pedestals.clear();
   lg_pedestals.clear();
   
