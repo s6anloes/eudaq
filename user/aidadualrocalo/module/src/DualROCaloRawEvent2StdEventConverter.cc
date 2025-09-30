@@ -4,12 +4,12 @@
 #include "eudaq/StdEventConverter.hh"
 #include "eudaq/RawEvent.hh"
 #include "eudaq/Utils.hh"
+#include "mapping_sipm.hpp"
 
 #define MAX_SIPM_MODULE_NUM   8
 
 struct drpixel{
-  uint8_t board_id;
-  uint8_t channel_id;
+  unsigned int index;
   int16_t adc_value;
   uint64_t time_value;
 
@@ -86,18 +86,6 @@ bool DualROCaloRawEvent2StdEventConverter::Converting(eudaq::EventSPC d1, eudaq:
   auto ev = std::dynamic_pointer_cast<const eudaq::RawEvent>(d1);
   if(!ev)
     return false;
-
-  int channel_map[64];		// one FERS board
-  for (int i=1; i<16; i+=2) {		// odd rows, bottom to top
-    for (int j=0; j<4; j++) {	// columns, left to right
-      channel_map[(i-1)/2+8+j*16] = i*4+j;	//channel_map[channel_no] = position_idx(x=j,y=i)
-    }
-  }
-  for (int i=0; i<15; i+=2) {		// even rows, bottom to top
-    for (int j=0; j<4; j++) {	// columns, left to right
-      channel_map[8-(i+2)/2+j*16] = i*4+j;	//channel_map[channel_no] = position_idx(x=j,y=i)
-    }
-  }
   //std::vector<int> channel_map = DualROCaloRawEvent2StdEventConverter::Filling_Channel_Map(conf);
   
 
@@ -117,20 +105,27 @@ bool DualROCaloRawEvent2StdEventConverter::Converting(eudaq::EventSPC d1, eudaq:
   datait it0 = data0.begin()+1; // +1 because first entry in block is board_id
 
   while (it0 < data0.end()) {
+
     
     uint8_t channel_id = eudaq::getlittleendian<uint8_t>(&(*(it0)));
+    
+    auto hwloc = SiPMCaloMapping::HWLoc(board_id, channel_id);
+    if (!SiPMCaloMapping::HWLoc::is_valid(hwloc.boardID, hwloc.ch)) {
+      EUDAQ_THROW("DualROCaloRawEvent2StdEventConverter: Invalid board ID or channel number: boardID=" + std::to_string(hwloc.boardID) + ", ch=" + std::to_string(hwloc.ch));
+    }
+
+    unsigned int index = SiPMCaloMapping::getIdxFromHWLoc(hwloc);
+
     uint16_t lg_adc_value = eudaq::getlittleendian<uint16_t>(&(*(it0+2)));
     uint16_t hg_adc_value = eudaq::getlittleendian<uint16_t>(&(*(it0+4)));
     uint64_t toa_value = (uint64_t)eudaq::getlittleendian<uint32_t>(&(*(it0+6)))*1E3*0.5;  //LSB=0.5ns --> ps
     uint64_t tot_value = (uint64_t)eudaq::getlittleendian<uint16_t>(&(*(it0+10)))*1E3*0.5;
-//    std::cout << "toa_value=" << std::dec << toa_value << " from " << std::hex <<(int)*(it0+6) << (int)*(it0+7) << (int)*(it0+8) << (int)*(it0+9) << std::endl;
 
-    uint8_t n = channel_map[channel_id];
-    int16_t ped_subtracted_hg = hg_adc_value - hg_pedestals[n+64*board_id];
-    int16_t ped_subtracted_lg = lg_adc_value - lg_pedestals[n+64*board_id];
+    int16_t ped_subtracted_hg = hg_adc_value - hg_pedestals[index];
+    int16_t ped_subtracted_lg = lg_adc_value - lg_pedestals[index];
 
-    drpixel hg_pixel = {board_id, channel_id, ped_subtracted_hg, toa_value};
-    drpixel lg_pixel = {board_id, channel_id, ped_subtracted_lg, tot_value};
+    drpixel hg_pixel = {index, ped_subtracted_hg, toa_value};
+    drpixel lg_pixel = {index, ped_subtracted_lg, tot_value};
 
     hg_queue.push(hg_pixel);
     lg_queue.push(lg_pixel);
@@ -167,22 +162,20 @@ bool DualROCaloRawEvent2StdEventConverter::Converting(eudaq::EventSPC d1, eudaq:
 
   for (int p=0; p<64; p++){
     if (p<hg_send_n_channels){
-      uint8_t n = channel_map[hg_queue.top().channel_id];
-      uint16_t x = n%4 + (board_id%2)*4;
-      uint16_t y = n/4 + (board_id/2)*16;
+      auto physinfo = SiPMCaloMapping::getPhysInfoFromIdx(hg_queue.top().index);
+      auto x = physinfo.column;
+      auto y = physinfo.row + (board_id/2)*16;
       hg_plane.PushPixel(x, y, hg_queue.top().adc_value, hg_queue.top().time_value);	//time_value is ToA
-      //std::cout<<"DualROCaloRAWEventConverter:: Pushing Pixel with hg_adc_value = " << std::to_string(hg_queue.top().hg_adc_value) << std::endl;
     }
     hg_queue.pop();
   }
 
   for (int k=0; k<64; k++){
     if (k<lg_send_n_channels){
-      uint8_t n = channel_map[lg_queue.top().channel_id];
-      uint16_t x = n%4 + (board_id%2)*4;
-      uint16_t y = n/4 + (board_id/2)*16;
+      auto physinfo = SiPMCaloMapping::getPhysInfoFromIdx(lg_queue.top().index);
+      auto x = physinfo.column;
+      auto y = physinfo.row + (board_id/2)*16;
       lg_plane.PushPixel(x, y, lg_queue.top().adc_value, lg_queue.top().time_value);	//time_value is ToT
-      //std::cout<<"DualROCaloRAWEventConverter:: Pushing Pixel with hg_adc_value = " << std::to_string(hg_queue.top().hg_adc_value) << std::endl;
     }
     lg_queue.pop();
   }
