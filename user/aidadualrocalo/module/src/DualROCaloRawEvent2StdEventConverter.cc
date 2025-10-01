@@ -160,7 +160,9 @@ bool DualROCaloRawEvent2StdEventConverter::Converting(eudaq::EventSPC d1, eudaq:
       d2->SetTriggerN(d1->GetTriggerN(), d1->IsFlagTrigger());
     }
     if (d1->IsFlagTimestamp() && use_timestamps){
-      d2->SetTimestamp(d1->GetTimestampBegin()*1000000, d1->GetTimestampEnd()*1000000, d1->IsFlagTimestamp());
+      d2->SetTimestamp(d1->GetTimestampBegin(), d1->GetTimestampEnd(), d1->IsFlagTimestamp());
+      d2->SetTimeBegin(d1->GetTimestampBegin());
+      d2->SetTimeEnd(d1->GetTimestampEnd());
     }
   }
   

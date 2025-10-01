@@ -45,6 +45,7 @@ void DualROCaloDataCollector::DoDisconnect(eudaq::ConnectionSPC idx){
 }
 
 void DualROCaloDataCollector::DoReceive(eudaq::ConnectionSPC idx, eudaq::EventSP evsp){
+  /*
   std::unique_lock<std::mutex> lk(m_mtx_map);
   if(!evsp->IsFlagTrigger()){
     EUDAQ_THROW("!evsp->IsFlagTrigger()");
@@ -94,4 +95,6 @@ void DualROCaloDataCollector::DoReceive(eudaq::ConnectionSPC idx, eudaq::EventSP
 
   //ev_sync->Print(std::cout);
   WriteEvent(std::move(ev_sync));
+  */
+  WriteEvent(std::move(evsp));
 }

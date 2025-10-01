@@ -180,7 +180,7 @@ void DualROCaloProducer::Mainloop(){
 			
 			double trigger_time_stamp;
 			memcpy(&trigger_time_stamp, &block[3], sizeof(double));
-			ev->SetTimestamp(trigger_time_stamp, trigger_time_stamp+100);
+			ev->SetTimestamp(trigger_time_stamp, trigger_time_stamp+100, true);
 
 			uint64_t trigger_id;
 			memcpy(&trigger_id, &block[11], sizeof(uint64_t));
